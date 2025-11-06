@@ -1,40 +1,89 @@
-from http.server import HTTPServer, BaseHTTPRequestHandler
-import urllib.parse
+# app.py
+from flask import Flask, request, jsonify, make_response
 import requests
 import json
-import sys
+
+app = Flask(__name__)
 
 def process_api_request(mobile_number):
-    """Main API processing logic - Only returns id_number API results"""
-    # First API call - Get mobile number info
+    """Return only family-info (id_number API) results."""
     num_api_url = f"https://osinttx.karobetahack.workers.dev/?term={mobile_number}"
-    
     try:
         num_response = requests.get(num_api_url, timeout=10)
         num_response.raise_for_status()
         num_data = num_response.json()
-    except:
+    except Exception:
         return {"success": False, "error": "Service temporarily unavailable"}
-    
-    # Check if mobile API was successful
+
     if not num_data.get('success', False):
         return {"success": False, "error": "No data found"}
-    
-    # Check if result exists and has data
+
     results = num_data.get('result', [])
     if not results:
         return {"success": False, "error": "No data found"}
-    
-    # Process each result to get Aadhar info
+
     final_results = []
     for result in results:
-        # Extract id_number (Aadhar) if available
         id_number = result.get('id_number', '').strip()
-        
-        # If id_number is available and valid (12 digits), call second API
         if id_number and id_number.isdigit() and len(id_number) == 12:
             try:
-                # Second API call - Get family members info
+                aadhar_api_url = f"https://family-members-info.vercel.app/fetch?key=paidkey&aadhar={id_number}"
+                aadhar_response = requests.get(aadhar_api_url, timeout=10)
+                aadhar_response.raise_for_status()
+                aadhar_data = aadhar_response.json()
+                final_results.append(aadhar_data)
+            except Exception:
+                continue
+
+    if not final_results:
+        return {"success": False, "error": "No family data available"}
+
+    return {"success": True, "result": final_results}
+
+
+@app.route("/", methods=["GET", "OPTIONS"])
+def main():
+    if request.method == "OPTIONS":
+        resp = make_response("")
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return resp
+
+    mobile_number = request.args.get("num", "").strip()
+    if not mobile_number:
+        return make_error("Missing 'num' parameter")
+    if not (mobile_number.isdigit() and len(mobile_number) == 10):
+        return make_error("Invalid mobile number. Must be 10 digits.")
+
+    result = process_api_request(mobile_number)
+    if result.get("success", False):
+        resp = make_response(json.dumps(result, ensure_ascii=False, separators=(',', ':')))
+        resp.headers["Content-Type"] = "application/json"
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp
+    else:
+        return make_error(result.get("error", "Service temporarily unavailable"))
+
+
+def make_error(message):
+    payload = {"success": False, "error": message}
+    resp = make_response(json.dumps(payload, ensure_ascii=False, separators=(',', ':')), 400)
+    resp.headers["Content-Type"] = "application/json"
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    return resp
+
+
+# This is required for Vercel
+def handler(event, context):
+    from werkzeug.middleware.dispatcher import DispatcherMiddleware
+    from werkzeug.wrappers import Response
+    return DispatcherMiddleware(app)
+
+
+if __name__ == "__main__":
+    # Run locally for testing
+    app.run(host="0.0.0.0", port=8000)                # Second API call - Get family members info
                 aadhar_api_url = f"https://family-members-info.vercel.app/fetch?key=paidkey&aadhar={id_number}"
                 aadhar_response = requests.get(aadhar_api_url, timeout=10)
                 aadhar_response.raise_for_status()
