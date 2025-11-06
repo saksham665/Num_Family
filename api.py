@@ -147,17 +147,44 @@ def start_local_server(port=8000):
     except KeyboardInterrupt:
         print("\nServer stopped")
 
-# Vercel compatibility
+# Vercel serverless function handler
+def handler(request, context):
+    """Vercel serverless function handler"""
+    from io import BytesIO
+    
+    class VercelWrapper:
+        def __init__(self, request):
+            self.request = request
+            self.headers = {}
+            self.status_code = 200
+            
+        def send_response(self, code):
+            self.status_code = code
+            
+        def send_header(self, key, value):
+            self.headers[key] = value
+            
+        def end_headers(self):
+            pass
+            
+        def get_wfile(self):
+            return BytesIO()
+    
+    # Create wrapper and process request
+    wrapper = VercelWrapper(request)
+    handler_instance = APIHandler(wrapper.get_wfile(), request, None)
+    handler_instance.wfile = BytesIO()
+    
+    # Process the request
+    handler_instance.do_GET()
+    
+    # Return response
+    return {
+        'statusCode': wrapper.status_code,
+        'headers': wrapper.headers,
+        'body': handler_instance.wfile.getvalue().decode('utf-8')
+    }
+
+# Local execution
 if __name__ == "__main__":
-    # This runs when executed directly (Termux)
     start_local_server()
-else:
-    # This runs on Vercel
-    from http.server import BaseHTTPRequestHandler as VercelHandler
-    globals()['Handler'] = type('Handler', (VercelHandler,), {
-        'do_GET': APIHandler.do_GET,
-        'do_OPTIONS': APIHandler.do_OPTIONS,
-        'send_success_response': APIHandler.send_success_response,
-        'send_error_response': APIHandler.send_error_response,
-        'log_message': APIHandler.log_message
-    })
